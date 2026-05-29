@@ -1,14 +1,25 @@
 # Imported/conformance tests
 
-This directory is reserved for test cases adapted from upstream projects and
-Unicode conformance data. Keep provenance clear in file headers and preserve
-required license notices.
+This directory tracks license/provenance for conformance data and upstream cases
+used by the in-tree tests.
 
-Planned sources:
+## Included
 
-- Unicode `GraphemeBreakTest.txt`
-- Unicode East Asian Width / emoji property data needed to generate width tables
-- `github.com/rivo/uniseg` Go tests
-- Rust `unicode-segmentation`, `unicode-width`, `unicode-display-width`, and `grapheme-width-rs` tests
-- Python `jquast/wcwidth` tests
-- Zig `zg`, `uucode`, `zig-wcwidth`, and `libvaxis` display-width tests
+- `unicode/GraphemeBreakTest.txt` — Unicode 17.0.0 official grapheme break
+  conformance data, copied from the shallow-cloned `uucode` UCD mirror in
+  `tmp/upstream/uucode/ucd/auxiliary/GraphemeBreakTest.txt`.
+- `unicode/LICENSE.txt` — Unicode License.
+
+The same grapheme break test file is mirrored under `src/testdata/` because Zig
+`@embedFile` for the root module must stay inside the module package path.
+
+## Upstream cases adapted into `src/root.zig`
+
+- `rivo/uniseg` (`width_test.go`) — MIT.
+- `zg` (`src/DisplayWidth.zig`) — MIT; Unicode data under Unicode License.
+- `zig-wcwidth` (`src/test.zig`) — MIT.
+- `libvaxis` (`src/gwidth.zig`) — MIT.
+- `jquast/wcwidth` (`tests/test_core.py`, `tests/test_emojis.py`) — MIT.
+
+The upstream repositories were shallow-cloned into `tmp/upstream/` for review;
+that directory is intentionally ignored and not vendored.

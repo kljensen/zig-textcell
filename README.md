@@ -1,8 +1,8 @@
-# zig-textcells
+# zig-textcell
 
-`zig-textcells` is planned as a small Zig library for answering the terminal
-question: **what visible text unit comes next, and how many fixed-width terminal
-cells does it occupy?**
+`zig-textcell` is a small Zig library for answering the terminal question:
+**what visible text unit comes next, and how many fixed-width terminal cells does
+it occupy?**
 
 The immediate consumer is `lulzcat`, a Zig `lolcat` variant that needs to color
 Unicode text by visible terminal position instead of by byte or code point.
@@ -38,12 +38,16 @@ while (it.next()) |cluster| {
 }
 ```
 
-Lower-level helpers should likely include:
+Public helpers include:
 
+- `Iterator.init(bytes: []const u8) Iterator`
+- `Iterator.next() ?GraphemeCluster`
 - `stringWidth(bytes: []const u8) usize`
 - `codepointWidth(cp: u21) i4`
 - `graphemeWidth(bytes: []const u8) usize`
-- an iterator that survives invalid UTF-8 with replacement-character semantics
+
+The iterator preserves original byte slices and survives invalid UTF-8 with
+replacement-character width semantics.
 
 ## Related projects
 
@@ -75,8 +79,19 @@ Lower-level helpers should likely include:
 - [`jquast/wcwidth`](https://github.com/jquast/wcwidth) — Python `wcwidth`
   implementation with a broad test corpus used by many terminal projects.
 
+## Unicode data
+
+Generated tables in `src/unicode_data.zig` come from Unicode 17.0.0 data. To
+refresh them from a local UCD checkout:
+
+```sh
+python3 tools/update_unicode_data.py --ucd path/to/ucd
+```
+
+The development handoff used `tmp/upstream/uucode/ucd` as that UCD checkout.
+
 ## Test strategy
 
-Prefer official Unicode conformance data where possible, then supplement with
-real-world tests from the related projects above. Keep imported tests attributed
-and license-compatible.
+The test suite includes Unicode 17.0.0 `GraphemeBreakTest.txt` conformance data
+plus curated display-width cases adapted from the related projects above. Keep
+imported tests attributed and license-compatible.
