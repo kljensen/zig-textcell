@@ -72,8 +72,23 @@ Defaults target practical terminal filters:
   1; ill-formed multibyte prefixes consume their maximal available continuation
   subpart as one replacement unit
 
+Grapheme clusters are unbounded by design: pathological input can make one
+cluster span the entire remaining byte slice. Consumers must not assume a small
+maximum cluster byte length.
+
 No terminal escape-sequence parser is included. Ambiguous-width CJK tailoring and
 alternative control policies can be added later as explicit options.
+
+## Security notes
+
+Input bytes may be attacker-controlled. The library does not allocate, does not
+perform I/O, and preserves original bytes for callers. That also means terminal
+escape sequences are passed through verbatim in `cluster.bytes`; consumers that
+write to a terminal must strip or sanitize CSI/OSC/DCS/APC and related controls
+before display. Escape sequences are not parsed for layout and may measure wider
+than a terminal ultimately advances.
+
+See `SECURITY_REVIEW.md` for the current threat model and review notes.
 
 ## Related projects
 
@@ -121,6 +136,13 @@ The development handoff used `tmp/upstream/uucode/ucd` as that UCD checkout.
 ```sh
 zig build test
 tools/check_downstream_import.sh
+```
+
+`zig build test` includes a fuzzable invariant test and runs its seed corpus in
+normal test mode. To start Zig's continuous fuzzer locally:
+
+```sh
+zig build test --fuzz --test-filter "fuzz textcell invariants"
 ```
 
 The downstream check builds a temporary consumer package that imports this

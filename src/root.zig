@@ -11,7 +11,9 @@ const Gbp = unicode_data.GraphemeBreakProperty;
 const Icb = unicode_data.IndicConjunctBreak;
 
 pub const GraphemeCluster = struct {
-    /// Original bytes for this visible text unit.
+    /// Original bytes for this visible text unit. A Unicode grapheme cluster can
+    /// be as large as the remaining input for pathological combining/control
+    /// sequences; callers must not copy this into fixed-size buffers.
     bytes: []const u8,
     /// Terminal cells occupied by this cluster. Control effects that would move
     /// backward at codepoint level are clamped to zero for iterator consumers.
@@ -93,7 +95,7 @@ pub fn stringWidth(bytes: []const u8) usize {
     var it = Iterator.init(bytes);
     var total: isize = 0;
     while (it.nextBytes()) |cluster_bytes| {
-        total += graphemeWidthSigned(cluster_bytes);
+        total = saturatingAddIsize(total, graphemeWidthSigned(cluster_bytes));
     }
     return clampWidth(total);
 }
@@ -275,12 +277,19 @@ fn clampWidth(width: isize) usize {
     return if (width <= 0) 0 else @intCast(width);
 }
 
+fn saturatingAddIsize(a: isize, b: isize) isize {
+    if (b > 0 and a > std.math.maxInt(isize) - b) return std.math.maxInt(isize);
+    if (b < 0 and a < std.math.minInt(isize) - b) return std.math.minInt(isize);
+    return a + b;
+}
+
 const Decoded = struct {
     cp: u21,
     end: usize,
 };
 
 fn decodeNext(bytes: []const u8, index: usize) Decoded {
+    std.debug.assert(index < bytes.len);
     const replacement: u21 = 0xfffd;
     const b0 = bytes[index];
     if (b0 < 0x80) return .{ .cp = b0, .end = index + 1 };
@@ -343,19 +352,24 @@ fn isContinuation(byte: u8) bool {
 }
 
 fn appendUtf8(out: []u8, len: *usize, cp: u21) !void {
+    if (len.* > out.len) return error.NoSpace;
     if (cp <= 0x7f) {
+        if (out.len - len.* < 1) return error.NoSpace;
         out[len.*] = @intCast(cp);
         len.* += 1;
     } else if (cp <= 0x7ff) {
+        if (out.len - len.* < 2) return error.NoSpace;
         out[len.*] = @intCast(0xc0 | (cp >> 6));
         out[len.* + 1] = @intCast(0x80 | (cp & 0x3f));
         len.* += 2;
     } else if (cp <= 0xffff) {
+        if (out.len - len.* < 3) return error.NoSpace;
         out[len.*] = @intCast(0xe0 | (cp >> 12));
         out[len.* + 1] = @intCast(0x80 | ((cp >> 6) & 0x3f));
         out[len.* + 2] = @intCast(0x80 | (cp & 0x3f));
         len.* += 3;
     } else if (cp <= 0x10ffff) {
+        if (out.len - len.* < 4) return error.NoSpace;
         out[len.*] = @intCast(0xf0 | (cp >> 18));
         out[len.* + 1] = @intCast(0x80 | ((cp >> 12) & 0x3f));
         out[len.* + 2] = @intCast(0x80 | ((cp >> 6) & 0x3f));
@@ -477,6 +491,9 @@ test "iterator handles prepend and regional indicator boundaries" {
 }
 
 test "invalid UTF-8 is preserved and counted as replacement width" {
+    try std.testing.expectEqual(std.math.maxInt(isize), saturatingAddIsize(std.math.maxInt(isize), 1));
+    try std.testing.expectEqual(std.math.minInt(isize), saturatingAddIsize(std.math.minInt(isize), -1));
+
     const truncated_four = "\xf0\x9f";
     var truncated = Iterator.init(truncated_four);
     const truncated_cluster = truncated.next().?;
@@ -511,6 +528,53 @@ test "invalid UTF-8 is preserved and counted as replacement width" {
     try std.testing.expectEqual(@as(usize, 4), stringWidth("a\xf0\x9fb\x80"));
 }
 
+fn fuzzOneInput(input: []const u8) !void {
+    var total: isize = 0;
+    var last_index: usize = 0;
+    var cluster_count: usize = 0;
+    var it = Iterator.init(input);
+
+    while (it.next()) |cluster| {
+        try std.testing.expect(it.index > last_index);
+        try std.testing.expect(it.index <= input.len);
+        try std.testing.expectEqualSlices(u8, input[last_index..it.index], cluster.bytes);
+        try std.testing.expectEqual(clampWidth(graphemeWidthSigned(cluster.bytes)), cluster.width);
+        total = saturatingAddIsize(total, graphemeWidthSigned(cluster.bytes));
+        last_index = it.index;
+        cluster_count += 1;
+        try std.testing.expect(cluster_count <= input.len);
+    }
+
+    try std.testing.expectEqual(input.len, last_index);
+    try std.testing.expectEqual(clampWidth(total), stringWidth(input));
+    _ = graphemeWidth(input);
+}
+
+test "fuzz textcell invariants" {
+    const Context = struct {
+        fn testOne(_: @This(), input: []const u8) anyerror!void {
+            try fuzzOneInput(input);
+        }
+    };
+
+    try std.testing.fuzz(Context{}, Context.testOne, .{ .corpus = &.{
+        "",
+        "hello",
+        "e\u{0301} 👩🏽‍🚀 界",
+        "\r\n\x00\x08\x7f",
+        "🇺🇸🇦🇺🏳️‍🌈1️⃣",
+        "\u{0600}a\u{0915}\u{094d}\u{0924}",
+        "\xf0\x9f",
+        "\xc0\xaf",
+        "\xed\xa0\x80",
+        "x\x80y\xe2(\xa1",
+        "\xff\xfe\xfd\xfc",
+        "\xf4\x90\x80\x80",
+        "\xe0\x80\x80",
+        "\xf0\x80\x80\x80",
+    } });
+}
+
 test "Unicode GraphemeBreakTest conformance" {
     const data = @embedFile("testdata/GraphemeBreakTest.txt");
     var lines = std.mem.splitScalar(u8, data, '\n');
@@ -529,6 +593,7 @@ test "Unicode GraphemeBreakTest conformance" {
         var tokens = std.mem.tokenizeAny(u8, body, " \t");
         while (tokens.next()) |token| {
             if (std.mem.eql(u8, token, "÷")) {
+                if (expected_len >= expected.len) return error.NoSpace;
                 expected[expected_len] = byte_len;
                 expected_len += 1;
             } else if (std.mem.eql(u8, token, "×")) {
@@ -544,6 +609,7 @@ test "Unicode GraphemeBreakTest conformance" {
         actual_len += 1;
         var it = Iterator.init(bytes[0..byte_len]);
         while (it.next()) |_| {
+            if (actual_len >= actual.len) return error.NoSpace;
             actual[actual_len] = it.index;
             actual_len += 1;
         }

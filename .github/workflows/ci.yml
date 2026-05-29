@@ -5,19 +5,26 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   ZIG_VERSION: 0.15.2
+  ZIG_X86_64_LINUX_SHA256: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: Install Zig
         run: |
           mkdir -p "$RUNNER_TEMP/zig"
-          curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
-            | tar -xJ --strip-components=1 -C "$RUNNER_TEMP/zig"
+          curl -fsSLo "$RUNNER_TEMP/zig.tar.xz" \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          echo "${ZIG_X86_64_LINUX_SHA256}  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" --strip-components=1 -C "$RUNNER_TEMP/zig"
           echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
       - run: zig version
       - run: zig build test

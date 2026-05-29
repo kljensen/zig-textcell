@@ -5,6 +5,7 @@
     .fingerprint = 0xf9ac5f674fc7e12,
     .paths = .{
         "README.md",
+        "SECURITY_REVIEW.md",
         "LICENSE",
         "build.zig",
         "build.zig.zon",
