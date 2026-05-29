@@ -1,7 +1,6 @@
 //! Unicode text segmentation and terminal cell width utilities.
 //!
-//! This is a placeholder API shell. The implementation plan is in
-//! `../lulzcat/tmp/zig_textcells_handoff.md` from the originating workspace.
+//! This is a placeholder API shell while the Unicode implementation is planned.
 
 const std = @import("std");
 
