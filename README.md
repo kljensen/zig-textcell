@@ -1,6 +1,6 @@
-# textcells.zig
+# zig-textcells
 
-`textcells.zig` is planned as a small Zig library for answering the terminal
+`zig-textcells` is planned as a small Zig library for answering the terminal
 question: **what visible text unit comes next, and how many fixed-width terminal
 cells does it occupy?**
 
