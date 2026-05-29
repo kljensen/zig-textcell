@@ -85,6 +85,8 @@ pub const Iterator = struct {
 /// Returns the terminal display width of a UTF-8 string in cells.
 ///
 /// Invalid UTF-8 bytes are preserved by the iterator and counted like U+FFFD.
+/// Ill-formed multibyte prefixes consume their maximal available continuation
+/// subpart so callers see one original byte slice per replacement unit.
 /// Backspace/DEL are allowed to reduce the accumulated width, but the result is
 /// never less than zero.
 pub fn stringWidth(bytes: []const u8) usize {
@@ -117,7 +119,7 @@ pub fn codepointWidth(cp: u21) i4 {
     if (cp == 0x2e3b) return 3; // THREE-EM DASH
 
     const prop = graphemeBreakProperty(cp);
-    if (prop == .regional_indicator) return 1;
+    if (prop == .regional_indicator) return 2;
     if (isEmojiModifier(cp)) return 2;
     if (prop == .control or prop == .extend or prop == .zwj or prop == .prepend or prop == .spacing_mark) return 0;
 
@@ -283,12 +285,12 @@ fn decodeNext(bytes: []const u8, index: usize) Decoded {
     const b0 = bytes[index];
     if (b0 < 0x80) return .{ .cp = b0, .end = index + 1 };
 
-    if (b0 >= 0xc2 and b0 <= 0xdf) {
-        if (index + 1 < bytes.len and isContinuation(bytes[index + 1])) {
+    if (b0 >= 0xc0 and b0 <= 0xdf) {
+        if (b0 >= 0xc2 and index + 1 < bytes.len and isContinuation(bytes[index + 1])) {
             const cp = (@as(u21, b0 & 0x1f) << 6) | @as(u21, bytes[index + 1] & 0x3f);
             return .{ .cp = cp, .end = index + 2 };
         }
-        return .{ .cp = replacement, .end = index + 1 };
+        return .{ .cp = replacement, .end = invalidSubpartEnd(bytes, index, 2) };
     }
 
     if (b0 >= 0xe0 and b0 <= 0xef) {
@@ -305,7 +307,7 @@ fn decodeNext(bytes: []const u8, index: usize) Decoded {
                 return .{ .cp = cp, .end = index + 3 };
             }
         }
-        return .{ .cp = replacement, .end = index + 1 };
+        return .{ .cp = replacement, .end = invalidSubpartEnd(bytes, index, 3) };
     }
 
     if (b0 >= 0xf0 and b0 <= 0xf4) {
@@ -323,10 +325,17 @@ fn decodeNext(bytes: []const u8, index: usize) Decoded {
                 return .{ .cp = cp, .end = index + 4 };
             }
         }
-        return .{ .cp = replacement, .end = index + 1 };
+        return .{ .cp = replacement, .end = invalidSubpartEnd(bytes, index, 4) };
     }
 
     return .{ .cp = replacement, .end = index + 1 };
+}
+
+fn invalidSubpartEnd(bytes: []const u8, index: usize, expected_len: usize) usize {
+    var end = index + 1;
+    const max_end = @min(bytes.len, index + expected_len);
+    while (end < max_end and isContinuation(bytes[end])) end += 1;
+    return end;
 }
 
 fn isContinuation(byte: u8) bool {
@@ -394,22 +403,42 @@ test "string width cases adapted from related libraries" {
 }
 
 test "grapheme cluster width cases adapted from uniseg zg and libvaxis" {
-    try std.testing.expectEqual(@as(usize, 1), stringWidth("e\u{0301}"));
-    try std.testing.expectEqual(@as(usize, 1), stringWidth("\u{2764}"));
-    try std.testing.expectEqual(@as(usize, 1), stringWidth("\u{2764}\u{fe0e}"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("\u{2764}\u{fe0f}"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("\u{26a1}"));
-    try std.testing.expectEqual(@as(usize, 1), stringWidth("\u{26a1}\u{fe0e}"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("\u{26a1}\u{fe0f}"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("👋🏿"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("🇩🇪"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("👩‍🚀"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("👨‍👩‍👧‍👧"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("\u{1f476}\u{1f3ff}\u{0308}\u{200d}\u{1f476}\u{1f3ff}"));
-    try std.testing.expectEqual(@as(usize, 15), stringWidth("🔥🗡🍩👩🏻‍🚀⏰💃🏼🔦👍🏻"));
-    try std.testing.expectEqual(@as(usize, 12), stringWidth("✍️✍🏻✍🏼✍🏽✍🏾✍🏿"));
-    try std.testing.expectEqual(@as(usize, 17), stringWidth("슬라바 우크라이나"));
-    try std.testing.expectEqual(@as(usize, 2), stringWidth("1️⃣"));
+    const Case = struct { s: []const u8, width: usize };
+    const cases = [_]Case{
+        .{ .s = "e\u{0301}", .width = 1 },
+        .{ .s = "\u{2764}", .width = 1 },
+        .{ .s = "\u{2764}\u{fe0e}", .width = 1 },
+        .{ .s = "\u{2764}\u{fe0f}", .width = 2 },
+        .{ .s = "\u{26a1}", .width = 2 },
+        .{ .s = "\u{26a1}\u{fe0e}", .width = 1 },
+        .{ .s = "\u{26a1}\u{fe0f}", .width = 2 },
+        .{ .s = "👋🏿", .width = 2 },
+        .{ .s = "🇩🇪", .width = 2 },
+        .{ .s = "🇺🇸🇦", .width = 4 },
+        .{ .s = "🇺🇸🇦🇺", .width = 4 },
+        .{ .s = "👩‍🚀", .width = 2 },
+        .{ .s = "👨‍👩‍👧‍👧", .width = 2 },
+        .{ .s = "🏳️‍🌈", .width = 2 },
+        .{ .s = "☺️", .width = 2 },
+        .{ .s = "⌛︎", .width = 1 },
+        .{ .s = "훯", .width = 2 },
+        .{ .s = "ผู้", .width = 1 },
+        .{ .s = "👩🏻‍", .width = 2 },
+        .{ .s = "👩🏻‍💻", .width = 2 },
+        .{ .s = "⛹🏻‍♀️", .width = 2 },
+        .{ .s = "♀️", .width = 2 },
+        .{ .s = "\u{200b}", .width = 0 },
+        .{ .s = "\u{200c}", .width = 0 },
+        .{ .s = "\u{1f476}\u{1f3ff}\u{0308}\u{200d}\u{1f476}\u{1f3ff}", .width = 2 },
+        .{ .s = "🔥🗡🍩👩🏻‍🚀⏰💃🏼🔦👍🏻", .width = 15 },
+        .{ .s = "✍️✍🏻✍🏼✍🏽✍🏾✍🏿", .width = 12 },
+        .{ .s = "슬라바 우크라이나", .width = 17 },
+        .{ .s = "1️⃣", .width = 2 },
+    };
+    for (cases) |case| {
+        errdefer std.debug.print("width case failed: {s}\n", .{case.s});
+        try std.testing.expectEqual(case.width, stringWidth(case.s));
+    }
 }
 
 test "iterator exposes original grapheme cluster bytes" {
@@ -428,6 +457,58 @@ test "iterator exposes original grapheme cluster bytes" {
     try std.testing.expectEqualStrings("界", cjk.bytes);
     try std.testing.expectEqual(@as(usize, 2), cjk.width);
     try std.testing.expectEqual(@as(?GraphemeCluster, null), it.next());
+}
+
+test "iterator handles prepend and regional indicator boundaries" {
+    var prepend = Iterator.init("\u{0600}a");
+    const joined = prepend.next().?;
+    try std.testing.expectEqualStrings("\u{0600}a", joined.bytes);
+    try std.testing.expectEqual(@as(usize, 1), joined.width);
+    try std.testing.expectEqual(@as(?GraphemeCluster, null), prepend.next());
+
+    var flags = Iterator.init("a🇺🇸🇦b");
+    try std.testing.expectEqualStrings("a", flags.next().?.bytes);
+    try std.testing.expectEqualStrings("🇺🇸", flags.next().?.bytes);
+    const lone_ri = flags.next().?;
+    try std.testing.expectEqualStrings("🇦", lone_ri.bytes);
+    try std.testing.expectEqual(@as(usize, 2), lone_ri.width);
+    try std.testing.expectEqualStrings("b", flags.next().?.bytes);
+    try std.testing.expectEqual(@as(?GraphemeCluster, null), flags.next());
+}
+
+test "invalid UTF-8 is preserved and counted as replacement width" {
+    const truncated_four = "\xf0\x9f";
+    var truncated = Iterator.init(truncated_four);
+    const truncated_cluster = truncated.next().?;
+    try std.testing.expectEqualStrings(truncated_four, truncated_cluster.bytes);
+    try std.testing.expectEqual(@as(usize, 1), truncated_cluster.width);
+    try std.testing.expectEqual(@as(?GraphemeCluster, null), truncated.next());
+
+    const overlong = "a\xc0\xafz";
+    var overlong_it = Iterator.init(overlong);
+    try std.testing.expectEqualStrings("a", overlong_it.next().?.bytes);
+    const invalid = overlong_it.next().?;
+    try std.testing.expectEqualStrings("\xc0\xaf", invalid.bytes);
+    try std.testing.expectEqual(@as(usize, 1), invalid.width);
+    try std.testing.expectEqualStrings("z", overlong_it.next().?.bytes);
+    try std.testing.expectEqual(@as(?GraphemeCluster, null), overlong_it.next());
+
+    const surrogate = "\xed\xa0\x80";
+    var surrogate_it = Iterator.init(surrogate);
+    try std.testing.expectEqualStrings(surrogate, surrogate_it.next().?.bytes);
+    try std.testing.expectEqual(@as(?GraphemeCluster, null), surrogate_it.next());
+
+    const mixed = "x\x80y\xe2(\xa1";
+    var mixed_it = Iterator.init(mixed);
+    try std.testing.expectEqualStrings("x", mixed_it.next().?.bytes);
+    try std.testing.expectEqualStrings("\x80", mixed_it.next().?.bytes);
+    try std.testing.expectEqualStrings("y", mixed_it.next().?.bytes);
+    try std.testing.expectEqualStrings("\xe2", mixed_it.next().?.bytes);
+    try std.testing.expectEqualStrings("(", mixed_it.next().?.bytes);
+    try std.testing.expectEqualStrings("\xa1", mixed_it.next().?.bytes);
+    try std.testing.expectEqual(@as(?GraphemeCluster, null), mixed_it.next());
+
+    try std.testing.expectEqual(@as(usize, 4), stringWidth("a\xf0\x9fb\x80"));
 }
 
 test "Unicode GraphemeBreakTest conformance" {

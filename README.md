@@ -49,6 +49,32 @@ Public helpers include:
 The iterator preserves original byte slices and survives invalid UTF-8 with
 replacement-character width semantics.
 
+## Width policy
+
+Defaults target practical terminal filters:
+
+- printable ASCII and most neutral/narrow codepoints: width 1
+- NUL, C0/C1 controls, combining marks, ZWJ, ZWSP/ZWNJ, and most format marks:
+  width 0
+- backspace and DEL: width -1 at `codepointWidth`, clamped so aggregate string
+  and cluster widths never underflow
+- East Asian Wide/Fullwidth codepoints: width 2
+- East Asian Ambiguous codepoints: width 1
+- emoji-presentation codepoints: width 2
+- variation selector 15 (`U+FE0E`): forces text presentation width 1 for the
+  cluster
+- variation selector 16 (`U+FE0F`): forces emoji presentation width 2 for the
+  cluster
+- regional indicators: lone indicators and flag pairs report width 2, while
+  pairs are clustered per UAX #29
+- ZWJ emoji sequences and emoji modifier sequences: width 2
+- invalid UTF-8: preserved as original byte slices and measured as U+FFFD width
+  1; ill-formed multibyte prefixes consume their maximal available continuation
+  subpart as one replacement unit
+
+No terminal escape-sequence parser is included. Ambiguous-width CJK tailoring and
+alternative control policies can be added later as explicit options.
+
 ## Related projects
 
 - [`rivo/uniseg`](https://github.com/rivo/uniseg) — Go library for Unicode text
@@ -89,6 +115,17 @@ python3 tools/update_unicode_data.py --ucd path/to/ucd
 ```
 
 The development handoff used `tmp/upstream/uucode/ucd` as that UCD checkout.
+
+## Checks
+
+```sh
+zig build test
+tools/check_downstream_import.sh
+```
+
+The downstream check builds a temporary consumer package that imports this
+checkout as module `textcells`; it is a stand-in for the `lulzcat` integration
+until that application wires the dependency directly.
 
 ## Test strategy
 
